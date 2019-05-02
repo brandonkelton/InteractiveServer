@@ -105,13 +105,23 @@ namespace InteractiveServer
 
             if (bytesRead > 0)
             {
-                client.Command.Append(Encoding.Unicode.GetString(client.Buffer, 0, bytesRead));
+                var commandPart = Encoding.Unicode.GetString(client.Buffer, 0, bytesRead);
+
+                if (!String.IsNullOrEmpty(commandPart))
+                {
+                    client.Command.Append(commandPart);
+                }
+                
                 client.Buffer = new byte[Client.BufferSize];
 
                 if (client.Command.ToString().EndsWith("<STOP>"))
                 {
-                    client.Command.Remove(client.Command.ToString().IndexOf("<STOP>"), 6);
-                    ProcessCommand(client);
+                    int stopIndex = client.Command.ToString().IndexOf("<STOP>");
+                    if (stopIndex > -1)
+                    {
+                        client.Command.Remove(stopIndex, 6);
+                        ProcessCommand(client);
+                    }
                     client.Command.Clear();
                 }
                 else
@@ -124,6 +134,10 @@ namespace InteractiveServer
 
         private void ProcessCommand(Client client)
         {
+            if (String.IsNullOrEmpty(client.Command.ToString())) {
+                return;
+            }
+
             var result = CommandHandler.GetResult(client);
             client.Message = result == null ? "Invalid Command: " + client.Command.ToString() : result;
 
@@ -204,7 +218,7 @@ namespace InteractiveServer
 
             if (removedClient.ProducerController != null)
             {
-                removedClient.ProducerController.StopProducers();
+                removedClient.ProducerController.StopAllProducers();
             }
 
             removedClient.Socket.Close();

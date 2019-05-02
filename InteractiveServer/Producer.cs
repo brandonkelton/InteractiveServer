@@ -7,12 +7,15 @@ namespace InteractiveServer
 {
     public class Producer
     {
+        public Guid Id;
+
         private ProducerController _producerController;
         private DataService _dataService;
         private long _stopRequested = 0;
 
         public Producer(ProducerController producerController, DataService dataService)
         {
+            Id = Guid.NewGuid();
             _producerController = producerController;
             _dataService = dataService;
         }
@@ -25,6 +28,7 @@ namespace InteractiveServer
                     break;
 
                 var word = _dataService.GetNextWord();
+                if (word == null) break;
 
                 while (!_producerController.AddToBuffer(word))
                 {

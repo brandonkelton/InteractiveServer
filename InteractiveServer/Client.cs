@@ -23,5 +23,7 @@ namespace InteractiveServer
         public string Message { get; set; }
 
         public ProducerController ProducerController = null;
+        public Guid LinkToClientId = Guid.Empty;
+        public ConcurrentBag<Guid> LinkedClientIds = new ConcurrentBag<Guid>();
     }
 }

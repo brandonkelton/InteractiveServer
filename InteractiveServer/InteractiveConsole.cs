@@ -125,7 +125,7 @@ namespace InteractiveServer
                 foreach (var client in Server.Clients.Values)
                 {
                     if (client.ProducerController != null)
-                        client.ProducerController.StopProducers();
+                        client.ProducerController.StopAllProducers();
                 }
             }
 

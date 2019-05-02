@@ -9,12 +9,12 @@ using System.Threading.Tasks;
 
 namespace InteractiveServer
 {
-    // The default text was pulled from https://www.fulltextarchive.com/page/The-Comedie-of-Errors/
     public class DataService
     {
         private static Word[] Words = null;
         public static bool IsDataLoaded { get; private set; } = false;
         public static long LargestIndex { get; private set; } = 0;
+        public static int WordCount => Words.Count();
 
         // Maybe I was too efficient about loading the data here. I thought about making it load
         // each time a producer requested an indexed word, so as to minic the generation of a word,
@@ -23,7 +23,9 @@ namespace InteractiveServer
         {
             if (String.IsNullOrEmpty(fileName))
             {
-                fileName = "Assets\\RawBook.txt";
+                var directory = new DirectoryInfo("Assets");
+                var file = directory.GetFiles("RawBook.txt")[0];
+                fileName = file.FullName;
             }
 
             string text;
@@ -52,6 +54,18 @@ namespace InteractiveServer
 
         private long _currentIndex = 0;
         private object _objLock = new object();
+
+        public long GetCurrentIndex()
+        {
+            long currentIndex;
+
+            lock (_objLock)
+            {
+                currentIndex = _currentIndex;
+            }
+
+            return currentIndex;
+        }
 
         public bool HasWords()
         {
