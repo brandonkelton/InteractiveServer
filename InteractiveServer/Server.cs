@@ -117,7 +117,7 @@ namespace InteractiveServer
                 if (client.Command.ToString().EndsWith("<STOP>"))
                 {
                     int stopIndex = client.Command.ToString().IndexOf("<STOP>");
-                    if (stopIndex > -1)
+                    if (stopIndex > -1 && client.Command.Length > 0)
                     {
                         client.Command.Remove(stopIndex, 6);
                         ProcessCommand(client);
