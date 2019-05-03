@@ -17,7 +17,10 @@ namespace InteractiveServer
             switch (splitCommand[0].ToLower().Trim())
             {
                 case CommandTypes.HELLO:
-                    resultMessage = "HELLO " + client.Endpoint.Address + ":" + client.Endpoint.Port;
+                    resultMessage = "HELLO " + (client.Socket.RemoteEndPoint as IPEndPoint).Address + ":" + (client.Socket.RemoteEndPoint as IPEndPoint).Port;
+                    break;
+                case CommandTypes.SET_BUFFER:
+                    resultMessage = SetProducerBuffer(client, splitCommand.Skip(1).ToArray());
                     break;
                 case CommandTypes.START_PRODUCERS:
                     resultMessage = StartClientProducers(client, splitCommand.Skip(1).ToArray());
@@ -50,7 +53,7 @@ namespace InteractiveServer
                     resultMessage = GetClientProducerWord(client);
                     break;
                 case CommandTypes.DISCONNECT:
-                    Server.DestroyClient(client.Id);
+                    client.Deactivate();
                     resultMessage = "DISCONNECTED";
                     break;
                 default:
@@ -94,28 +97,50 @@ namespace InteractiveServer
             var message = new StringBuilder();
 
             message.Append("<FORMAT><COLUMNS>\n");
-            message.Append("{0,25}{1,15}{2,7}{3,8}{4,9}{5,8}\n");
-            message.Append("HOST NAME,IP ADDRESS,PORT,LINKED,PRODCRS,BUFFER\n");
+            message.Append("{0,30}{1,15}{2,7}{3,8}{4,8}{5,12}{6,12}\n");
+            message.Append("HOST NAME,IP ADDRESS,PORT,ID,LINKED,PRODUCERS,CONSUMERS\n");
 
             foreach (var client in clients)
             {
+                var id = client.Id.ToString().Substring(0, 6);
                 var ipAddress = (client.Socket.RemoteEndPoint as IPEndPoint).Address.ToString();
                 var port = (client.Socket.RemoteEndPoint as IPEndPoint).Port;
                 var name = Dns.GetHostEntry(ipAddress).HostName;
-                var linkToClient = client.LinkToClientId != Guid.Empty ? client.LinkToClientId.ToString().Substring(0, 6) : "";
-                var producerCount = client.ProducerController != null ? client.ProducerController.ProducerCount.ToString() : "";
-                var bufferLevel = client.ProducerController != null ? client.ProducerController.BufferLevel : "";
+                var linkToClient = client.LinkToClientId != Guid.Empty ? client.LinkToClientId.ToString().Substring(0, 6) : "MASTER";
+                var producerCount = client.LinkToClientId == Guid.Empty ? client.ProducerController.ProducerCount.ToString() : "";
+                var consumerCount = client.LinkToClientId == Guid.Empty ? Server.Clients.Values.FirstOrDefault(c => c.Id == client.Id)?.LinkedClientIds.Count().ToString() ?? "" : "";
 
-                message.Append($"{name},{ipAddress},{port},{linkToClient},{producerCount},{bufferLevel}\n");
+                message.Append($"{name},{ipAddress},{port},{id},{linkToClient},{producerCount},{consumerCount}\n");
             }
 
             return message.ToString();
         }
 
+        private static string SetProducerBuffer(Client client, string[] arguments)
+        {
+            int bufferSize;
+            if (arguments.Length == 0 || !int.TryParse(arguments[0], out bufferSize))
+            {
+                return "INVALID PRODUCER BUFFER ARGUMENTS";
+            }
+
+            if (client.ProducerController != null)
+            {
+                return "CAN NOT SET BUFFER ONCE PRODUCERS ARE STARTED";
+            }
+
+            if (client.ProducerController == null)
+            {
+                client.ProducerController = new ProducerController(bufferSize);
+            }
+
+            return $"PRODUCER BUFFER = {bufferSize}";
+        }
+
         private static string StartClientProducers(Client client, string[] arguments)
         {
-            int producerCount;
-            if (arguments.Length == 0 || !int.TryParse(arguments[0], out producerCount))
+            int producerCount = 0;
+            if (arguments.Length > 0 && !int.TryParse(arguments[0], out producerCount))
             {
                 return "INVALID PRODUCER ARGUMENTS";
             }
@@ -127,17 +152,24 @@ namespace InteractiveServer
             }
             else
             {
-                bufferSize = 10;
+                bufferSize = 20;
             }
 
             if (client.ProducerController == null)
             {
                 client.ProducerController = new ProducerController(bufferSize);
             }
-            
-            client.ProducerController.StartProducers(producerCount);
 
-            return $"{producerCount} PRODUCERS STARTED | {client.ProducerController.ProducerCount} PRODUCERS RUNNING";
+            if (producerCount == 0)
+            {
+                client.ProducerController.StartSelfAdjustingProducers();
+            }
+            else
+            {
+                client.ProducerController.StartProducers(producerCount);
+            }
+
+            return $"{(producerCount == 0 ? "SELF-ADJUSTING" : producerCount.ToString())} PRODUCERS STARTED | {client.ProducerController.ProducerCount} PRODUCERS RUNNING";
         }
 
         private static string StopClientProducers(Client client, string[] arguments)
@@ -203,7 +235,7 @@ namespace InteractiveServer
 
             if (arguments.Length == 0 
                 || !Guid.TryParse(arguments[0], out linkClientId)
-                || (linkClient = Server.Clients.Values.FirstOrDefault(c => c.Id == linkClientId)) == null)
+                || !Server.Clients.TryGetValue(linkClientId, out linkClient))
             {
                 return "INVALID CLIENT ID OR CLIENT NOT FOUND";
             }
@@ -242,7 +274,7 @@ namespace InteractiveServer
                 return "THERE ARE NO ACTIVE PRODUCERS FOR THIS CLIENT";
             }
 
-            return client.ProducerController.BufferLevel;
+            return $"{(int)client.ProducerController.BufferLevel}%";
         }
 
         private static string GetTransferStatus(Client client)

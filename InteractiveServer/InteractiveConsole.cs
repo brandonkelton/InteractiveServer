@@ -23,7 +23,7 @@ namespace InteractiveServer
             Console.WriteLine(" Done!");
 
             _server = new Server();
-            _serverThread = new Thread(new ThreadStart(() => _server.Listen()));
+            _serverThread = new Thread(new ThreadStart(async () => await _server.Listen()));
             _serverThread.Start();
 
             Console.WriteLine("\n\n--------------------------");

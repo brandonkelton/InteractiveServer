@@ -12,14 +12,27 @@ namespace InteractiveServer
     {
         public static int BufferSize { get; set; } = 1024;
 
+        private long _isActive = 0;
+        public bool IsActive => Interlocked.Read(ref _isActive) == 1;
+
+        public CancellationToken CancellationToken { get; set; } = new CancellationToken();
+
+        public void Activate()
+        {
+            Interlocked.Exchange(ref _isActive, 1);
+        }
+
+        public void Deactivate()
+        {
+            Interlocked.Exchange(ref _isActive, 0);
+        }
+
         public Guid Id { get; set; }
-        public IPEndPoint Endpoint { get; set; }
         public Socket Socket { get; set; }
         
         public byte[] Buffer { get; set; } = new byte[BufferSize];
         public StringBuilder Command { get; set; } = new StringBuilder();
 
-        public bool IsActive { get; set; }
         public string Message { get; set; }
 
         public ProducerController ProducerController = null;

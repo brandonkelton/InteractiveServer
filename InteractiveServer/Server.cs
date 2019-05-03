@@ -12,13 +12,12 @@ namespace InteractiveServer
 {
     public class Server
     {
-        public static ConcurrentDictionary<Guid, Client> Clients = new ConcurrentDictionary<Guid, Client>(10, 100);
-
+        public static ConcurrentDictionary<Guid, Client> Clients = new ConcurrentDictionary<Guid, Client>();
         public IPEndPoint EndPoint;
         public bool IsActive { get; private set; }
         public bool CanServerListen { get; private set; }
 
-        private ManualResetEvent _listenerResetEvent = new ManualResetEvent(false);
+        private static ConcurrentDictionary<Guid, Thread> ClientThreads = new ConcurrentDictionary<Guid, Thread>();
         private Socket _socket;
 
         public Server()
@@ -28,7 +27,7 @@ namespace InteractiveServer
             EndPoint = new IPEndPoint(localIP, IPEndPoint.MaxPort);
         }
 
-        public void Listen()
+        public async Task Listen()
         {
             IsActive = true;
 
@@ -41,98 +40,70 @@ namespace InteractiveServer
 
             while (CanServerListen)
             {
-                _listenerResetEvent.Reset();
+                var socket = await _socket.AcceptAsync();
+                var client = CreateClient(socket);
 
-                _socket.BeginAccept(new AsyncCallback(AcceptConnection), _socket);
-
-                _listenerResetEvent.WaitOne();
+                if (client != null)
+                {
+                    var thread = new Thread(new ThreadStart(async () => await ExecuteClient(client)));
+                    while (!ClientThreads.TryAdd(client.Id, thread))
+                        Thread.Sleep(10);
+                    thread.Start();
+                }
             }
-
-            _listenerResetEvent.Set();
 
             IsActive = false;
         }
 
-        private void AcceptConnection(IAsyncResult result)
+        private async Task ExecuteClient(Client client)
         {
-            _listenerResetEvent.Set();
+            client.Activate();
 
-            if (!CanServerListen || !IsActive)
+            while (client.IsActive)
             {
-                return;
+                if (client.CancellationToken.IsCancellationRequested)
+                {
+                    client.Deactivate();
+                }
+
+                try
+                {
+                    var bytesReceived = await client.Socket.ReceiveAsync(client.Buffer, SocketFlags.None, client.CancellationToken);
+                    if (bytesReceived > 0) await ProcessClientMessage(client, bytesReceived);
+                }
+                catch (Exception)
+                {
+                    client.Deactivate(); // Swallow the exception for now
+                }
             }
-
-            var socket = ((Socket)result.AsyncState).EndAccept(result);
-
-            Client client = null;
-
-            try
-            {
-                client = CreateClient();
-            }
-            catch (InvalidOperationException e)
-            {
-                var messageByteString = Encoding.Unicode.GetBytes("Could not accept client. Please try again later.");
-                var messageBuffer = new ReadOnlyMemory<byte>(messageByteString);
-                socket.Send(messageBuffer.ToArray(), SocketFlags.None);
-                socket.Close();
-                socket.Disconnect(true);
-                socket.Dispose();
-                return;
-            }
-
-            client.Endpoint = socket.RemoteEndPoint as IPEndPoint;
-            client.Socket = socket;
-
-            client.Socket.BeginReceive(client.Buffer, 0, Client.BufferSize, SocketFlags.None,
-                new AsyncCallback(ReadClient), client);
+            
+            DestroyClient(client.Id);
         }
 
-        private void ReadClient(IAsyncResult result)
+        private async Task ProcessClientMessage(Client client, int bytesReceived)
         {
-            var client = (Client)result.AsyncState;
-            int bytesRead;
+            var commandPart = Encoding.Unicode.GetString(client.Buffer, 0, bytesReceived);
 
-            try
+            if (!String.IsNullOrEmpty(commandPart))
             {
-                bytesRead = client.Socket.EndReceive(result);
-            }
-            catch (Exception)
-            {
-                DestroyClient(client.Id);
-                return;
+                client.Command.Append(commandPart);
             }
 
-            if (bytesRead > 0)
+            client.Buffer = new byte[Client.BufferSize];
+
+            if (client.Command.ToString().EndsWith("<STOP>"))
             {
-                var commandPart = Encoding.Unicode.GetString(client.Buffer, 0, bytesRead);
-
-                if (!String.IsNullOrEmpty(commandPart))
+                int stopIndex = client.Command.ToString().IndexOf("<STOP>");
+                if (stopIndex > -1 && client.Command.Length > 0)
                 {
-                    client.Command.Append(commandPart);
+                    client.Command.Remove(stopIndex, 6);
+                    await ProcessCommand(client);
                 }
-                
-                client.Buffer = new byte[Client.BufferSize];
-
-                if (client.Command.ToString().EndsWith("<STOP>"))
-                {
-                    int stopIndex = client.Command.ToString().IndexOf("<STOP>");
-                    if (stopIndex > -1 && client.Command.Length > 0)
-                    {
-                        client.Command.Remove(stopIndex, 6);
-                        ProcessCommand(client);
-                    }
-                    client.Command.Clear();
-                }
-                else
-                {
-                    client.Socket.BeginReceive(client.Buffer, 0, Client.BufferSize, SocketFlags.None,
-                        new AsyncCallback(ReadClient), client);
-                }
+                client.Command.Clear();
             }
         }
 
-        private void ProcessCommand(Client client)
+        private async Task ProcessCommand(Client client)
         {
             if (String.IsNullOrEmpty(client.Command.ToString())) {
                 return;
@@ -143,32 +114,8 @@ namespace InteractiveServer
 
             client.Command.Clear();
 
-            if (client.Message == "DISCONNECTED")
-            {
-                return;
-            }
-
             var returnBytes = Encoding.Unicode.GetBytes($"{client.Message}<STOP>");
-            var returnBuffer = new ReadOnlyMemory<byte>(returnBytes);
-            var sendResult = client.Socket.BeginSend(returnBuffer.ToArray(), 0, returnBuffer.Length, SocketFlags.None,
-                new AsyncCallback(SendClient), client);
-        }
-
-        private void SendClient(IAsyncResult result)
-        {
-            var client = (Client)result.AsyncState;
-
-            int bytesSent = client.Socket.EndSend(result);
-
-            try
-            {
-                client.Socket.BeginReceive(client.Buffer, 0, Client.BufferSize, SocketFlags.None,
-                    new AsyncCallback(ReadClient), client);
-            }
-            catch (Exception e)
-            {
-                DestroyClient(client.Id);
-            }
+            var bytesSent = await client.Socket.SendAsync(returnBytes, SocketFlags.None, client.CancellationToken);
         }
 
         public void Stop()
@@ -184,44 +131,65 @@ namespace InteractiveServer
             IsActive = false;
         }
 
-        private Client CreateClient()
+        private Client CreateClient(Socket socket)
         {
             var client = new Client
             {
                 Id = Guid.NewGuid(),
-                IsActive = true
+                Socket = socket
             };
 
-            var maxAttempts = 60;
+            var maxAttempts = 100;
             var attempts = 0;
-            while (!Clients.TryAdd(client.Id, client))
+            while (!Clients.TryAdd(client.Id, client) &&
+                attempts++ < maxAttempts)
             {
-                if (attempts >= maxAttempts)
-                {
-                    throw new InvalidOperationException("Error attempting to add client to ConcurrentBag");
-                }
-
-                attempts++;
-                Thread.Sleep(1000);
+                Thread.Sleep(10);
             }
 
-            return client;
+            return attempts >= maxAttempts ? null : client;
         }
 
         public static void DestroyClient(Guid id)
         {
-            Client removedClient;
-            if (!Clients.TryRemove(id, out removedClient))
-            {
-                Thread.Sleep(100);
-            }
+            int maxAttempts = 100;
 
-            if (removedClient.ProducerController != null)
+            if (Clients.ContainsKey(id))
             {
-                removedClient.ProducerController.StopAllProducers();
-            }
+                Client removedClient;
+                int removeClientAttempts = 0;
+                while (!Clients.TryRemove(id, out removedClient) &&
+                    removeClientAttempts++ < maxAttempts)
+                {
+                    Thread.Sleep(10);
+                }
 
-            removedClient.Socket.Close();
+                if (removedClient != null)
+                {
+                    if (removedClient.ProducerController != null)
+                    {
+                        removedClient.ProducerController.StopAllProducers();
+                    }
+
+                    if (removedClient.Socket != null)
+                    {
+                        removedClient.Socket.Close();
+                    }
+                }
+            }
+            
+            if (ClientThreads.ContainsKey(id))
+            {
+                Thread thread;
+                int removeThreadAttempts = 0;
+                while (!ClientThreads.TryRemove(id, out thread) &&
+                    removeThreadAttempts < maxAttempts)
+                {
+                    Thread.Sleep(10);
+                }
+
+                if (thread != null) thread.Join();
+            }
         }
     }
 }

@@ -9,6 +9,7 @@ namespace InteractiveServer
 {
     public class ProducerController
     {
+        public static int MaxProducers = 100;
         public int ProducerCount;
 
         private List<Producer> _producers = new List<Producer>();
@@ -16,6 +17,8 @@ namespace InteractiveServer
         private BlockingCollection<Word> Buffer;
         private int _bufferSize = 0;
         private DataService _dataService;
+        private long _producerWatcherStopRequested = 0;
+        private Thread _producerWatcherThread = null;
 
         public ProducerController(int bufferSize)
         {
@@ -26,17 +29,42 @@ namespace InteractiveServer
 
         public int PercentComplete => (int)(_dataService.GetCurrentIndex() / DataService.WordCount) * 100;
         public string TransferStatus => $"Words Transferred: {_dataService.GetCurrentIndex()}/{DataService.WordCount} > {PercentComplete}%";
-        public string BufferLevel => $"{(Buffer.Count() / Buffer.BoundedCapacity) * 100}%";
+        public decimal BufferLevel => ((decimal)Buffer.Count() / Buffer.BoundedCapacity) * 100;
 
-        public void Reset()
+        public void StartSelfAdjustingProducers()
         {
-            Buffer = new BlockingCollection<Word>(_bufferSize);
-            _dataService = new DataService();
+            if (_producerWatcherThread == null)
+            {
+                var thread = new Thread(new ThreadStart(() => StartProducers()));
+                thread.Start();
+            }
+        }
+
+        private void StartProducers()
+        {
+            while (true)
+            {
+                if (Interlocked.Read(ref _producerWatcherStopRequested) == 1)
+                {
+                    break;
+                }
+
+                if (BufferLevel > 90 && ProducerCount > 1)
+                {
+                    StopProducers(1);
+                }
+                else if (BufferLevel < 60 && ProducerCount < MaxProducers)
+                {
+                    StartProducers(1);
+                }
+
+                Thread.Sleep(250);
+            }
         }
 
         public void StartProducers(int count)
         {
-            for (int i=0; i<count; i++)
+            for (int i = 0; i < count; i++)
             {
                 var producer = new Producer(this, _dataService);
                 _producers.Add(producer);
@@ -84,10 +112,18 @@ namespace InteractiveServer
                     _producerThreads.Remove(producer.Id);
                 }
             }
+
+            ProducerCount = _producers.Count();
         }
 
         public void StopAllProducers()
         {
+            if (_producerWatcherThread != null && Interlocked.Read(ref _producerWatcherStopRequested) == 1)
+            {
+                Interlocked.Exchange(ref _producerWatcherStopRequested, 0);
+                _producerWatcherThread.Join();
+            }
+
             foreach (var producer in _producers)
             {
                 producer.Stop();

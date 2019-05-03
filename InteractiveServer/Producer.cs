@@ -11,7 +11,7 @@ namespace InteractiveServer
 
         private ProducerController _producerController;
         private DataService _dataService;
-        private long _stopRequested = 0;
+        private long _stopped = 1;
 
         public Producer(ProducerController producerController, DataService dataService)
         {
@@ -20,29 +20,32 @@ namespace InteractiveServer
             _dataService = dataService;
         }
 
-        public void Produce()
+        public void Start()
         {
-            while (_dataService.HasWords())
-            {
-                if (Interlocked.Read(ref _stopRequested) == 1)
-                    break;
-
-                var word = _dataService.GetNextWord();
-                if (word == null) break;
-
-                while (!_producerController.AddToBuffer(word))
-                {
-                    if (Interlocked.Read(ref _stopRequested) == 1)
-                        break;
-
-                    Thread.Sleep(100);
-                }
-            }
+            Interlocked.Exchange(ref _stopped, 0);
         }
 
         public void Stop()
         {
-            Interlocked.Exchange(ref _stopRequested, 1);
+            Interlocked.Exchange(ref _stopped, 1);
+        }
+
+        public bool IsActive => Interlocked.Read(ref _stopped) == 0;
+
+        public void Produce()
+        {
+            Start();
+
+            while (IsActive && _dataService.HasWords())
+            {
+                var word = _dataService.GetNextWord();
+                if (word == null) Stop();
+
+                while (IsActive && !_producerController.AddToBuffer(word))
+                {
+                    Thread.Sleep(10);
+                }
+            }
         }
     }
 }

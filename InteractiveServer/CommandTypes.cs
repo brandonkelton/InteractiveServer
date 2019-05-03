@@ -15,6 +15,7 @@ namespace InteractiveServer
         public const string LINK_TO_CLIENT = "linkto";
         public const string BUFFER = "buffer";
         public const string TRANSFER_STATUS = "transferstatus";
+        public const string SET_BUFFER = "setbuffer";
         public const string START_PRODUCERS = "startproducers";
         public const string STOP_PRODUCERS = "stopproducers";
         public const string STOP_ALL_PRODUCERS = "stopallproducers";
