@@ -40,15 +40,24 @@ namespace InteractiveServer
 
             while (CanServerListen)
             {
-                var socket = await _socket.AcceptAsync();
-                var client = CreateClient(socket);
-
-                if (client != null)
+                Socket socket = null;
+                try
                 {
-                    var thread = new Thread(new ThreadStart(async () => await ExecuteClient(client)));
-                    while (!ClientThreads.TryAdd(client.Id, thread))
-                        Thread.Sleep(10);
-                    thread.Start();
+                    socket = await _socket.AcceptAsync();
+                }
+                catch (Exception) { }
+
+                if (socket != null)
+                {
+                    var client = CreateClient(socket);
+
+                    if (client != null)
+                    {
+                        var thread = new Thread(new ThreadStart(async () => await ExecuteClient(client)));
+                        while (!ClientThreads.TryAdd(client.Id, thread))
+                            Thread.Sleep(10);
+                        thread.Start();
+                    }
                 }
             }
 
@@ -121,7 +130,8 @@ namespace InteractiveServer
         public void Stop()
         {
             CanServerListen = false;
-            _socket.Close();
+            _socket.Close(5);
+            _socket.Dispose();
 
             foreach (var client in Clients.Values)
             {
@@ -173,7 +183,8 @@ namespace InteractiveServer
 
                     if (removedClient.Socket != null)
                     {
-                        removedClient.Socket.Close();
+                        removedClient.Socket.Close(5);
+                        removedClient.Socket.Dispose();
                     }
                 }
             }

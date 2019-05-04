@@ -37,6 +37,6 @@ namespace InteractiveServer
 
         public ProducerController ProducerController = null;
         public Guid LinkToClientId = Guid.Empty;
-        public ConcurrentBag<Guid> LinkedClientIds = new ConcurrentBag<Guid>();
+        public List<Guid> LinkedClientIds = new List<Guid>();
     }
 }

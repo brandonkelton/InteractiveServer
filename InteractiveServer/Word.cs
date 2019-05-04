@@ -10,6 +10,6 @@ namespace InteractiveServer
 
         public string Text { get; set; }
 
-        public int BufferLevel { get; set; }
+        public double BufferLevel { get; set; }
     }
 }

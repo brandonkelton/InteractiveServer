@@ -13,6 +13,7 @@ namespace InteractiveServer
 
         private Server _server = null;
         private Thread _serverThread = null;
+        private long _repeatWaitStopRequested = 0;
 
         public async Task Start()
         {
@@ -39,6 +40,8 @@ namespace InteractiveServer
                 var userInput = Console.ReadLine();
                 if (userInput.Trim() == "") continue;
 
+                Console.WriteLine();
+
                 var result = CommandHandler.GetResult(userInput);
                 if (result == null)
                 {
@@ -52,7 +55,7 @@ namespace InteractiveServer
                     }
                     else
                     {
-                        Console.WriteLine($"\n{result}\n");
+                        Console.WriteLine(result);
                     }
                 }
             }
@@ -60,18 +63,80 @@ namespace InteractiveServer
 
         private void ProcessLocalCommand(string command)
         {
-            switch (command.Trim().ToLower())
+            if (command.ToLower().StartsWith(CommandTypes.REPEAT_WAIT))
             {
-                case CommandTypes.EXIT:
-                    Stop();
-                    break;
-                case CommandTypes.ENDPOINT:
-                    Console.WriteLine($"\nLISTENING ON: {_server.EndPoint.Address.ToString()}:{_server.EndPoint.Port}\n");
-                    break;
-                default:
-                    ShowInvalidCommand(command.ToString());
-                    break;
+                var args = command.Split(" ", StringSplitOptions.RemoveEmptyEntries);
+                RepeatWait(args.Skip(1).ToArray());
             }
+            else
+            {
+                switch (command.Trim().ToLower())
+                {
+                    case CommandTypes.EXIT:
+                        Stop();
+                        break;
+                    case CommandTypes.ENDPOINT:
+                        Console.WriteLine($"\nLISTENING ON: {_server.EndPoint.Address.ToString()}:{_server.EndPoint.Port}\n");
+                        break;
+                    default:
+                        ShowInvalidCommand(command.ToString());
+                        break;
+                }
+            }
+        }
+
+        private void RepeatWait(string[] arguments)
+        {
+            if (arguments.Length < 2)
+            {
+                Console.WriteLine("\nREPEAT-WAIT: INVALID NUMBER OF ARGUMENTS\n");
+                return;
+            }
+
+            int waitMilli;
+            if (!int.TryParse(arguments[0], out waitMilli))
+            {
+                Console.WriteLine("\nREPEAT-WAIT: INVALID MILLISECOND WAIT-TIME\n");
+                return;
+            }
+
+            _repeatWaitStopRequested = 0;
+
+            var thread = new Thread(new ThreadStart(() => WaitForEscape()));
+            thread.Start();
+
+            Console.WriteLine();
+
+            while (true)
+            {
+                if (Interlocked.Read(ref _repeatWaitStopRequested) == 1)
+                {
+                    break;
+                }
+
+                Console.WriteLine();
+                var result = CommandHandler.GetResult(String.Join(" ", arguments.Skip(1)));
+
+                if (result.StartsWith("<FORMAT>"))
+                {
+                    ShowFormattedMessage(result);
+                }
+                else
+                {
+                    Console.WriteLine(result);
+                }
+
+                Thread.Sleep(waitMilli);
+            }
+
+            thread.Join();
+        }
+
+        private void WaitForEscape()
+        {
+            while (Console.ReadKey(true).Key != ConsoleKey.Escape) { }
+
+            Interlocked.Exchange(ref _repeatWaitStopRequested, 1);
         }
 
         private void ShowFormattedMessage(string message)
@@ -90,9 +155,8 @@ namespace InteractiveServer
                 .Select(f => int.Parse(f.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries)[1]))
                 .Sum();
 
-            Console.WriteLine();
-
             var rowStart = 2;
+
             if (dataSplit[0].Contains("<COLUMNS>"))
             {
                 var columns = dataSplit[2].Split(",");
@@ -107,8 +171,6 @@ namespace InteractiveServer
             {
                 Console.WriteLine(format, row.Split(','));
             }
-
-            Console.WriteLine();
         }
 
         private void ShowInvalidCommand(string attemptedCommand)
@@ -120,6 +182,8 @@ namespace InteractiveServer
         {
             Console.WriteLine("Stopping Server...");
 
+            if (_server != null) _server.Stop();
+
             if (!Server.Clients.IsEmpty)
             {
                 foreach (var client in Server.Clients.Values)
@@ -128,13 +192,8 @@ namespace InteractiveServer
                         client.ProducerController.StopAllProducers();
                 }
             }
-
-            if (_serverThread != null)
-            {
-                if (_server != null) _server.Stop();
-                _serverThread.Join();
-            }
             
+            if (_serverThread != null) _serverThread.Join();
 
             IsActive = false;
             Console.WriteLine("Server Stopped!");

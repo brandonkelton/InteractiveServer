@@ -39,12 +39,17 @@ namespace InteractiveServer
             while (IsActive && _dataService.HasWords())
             {
                 var word = _dataService.GetNextWord();
-                if (word == null) Stop();
 
                 while (IsActive && !_producerController.AddToBuffer(word))
                 {
                     Thread.Sleep(10);
                 }
+
+                if (word.Text == "<EOF>")
+                {
+                    _producerController.StopAllProducers();
+                }
+                    
             }
         }
     }

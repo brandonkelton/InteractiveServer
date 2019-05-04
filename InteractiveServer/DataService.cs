@@ -42,8 +42,6 @@ namespace InteractiveServer
                 text = ex.Message;
             }
 
-            text = text + " <EOF>";
-
             Words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
                 .Select((word, index) => new Word { Index = index, Text = word }).ToArray();
 
@@ -79,6 +77,9 @@ namespace InteractiveServer
             return hasWords;
         }
 
+        // I could have used a ConcurrentQueue as the Words object, but I wanted
+        // to make sure and directly exercise some of the locking, etc.
+        // that we learned.
         public Word GetNextWord()
         {
             long currentIndex;
@@ -89,7 +90,16 @@ namespace InteractiveServer
                 _currentIndex++;
             }
 
-            var word = Words.FirstOrDefault(w => w.Index == currentIndex);
+            Word word;
+            if (currentIndex + 1 >= WordCount)
+            {
+                word = new Word { Text = "<EOF>" };
+            }
+            else
+            {
+                word = Words.FirstOrDefault(w => w.Index == currentIndex);
+            }
+
             return word;
         }
     }
