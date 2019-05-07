@@ -1,8 +1,9 @@
-﻿using Newtonsoft.Json;
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
+using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Threading;
 
@@ -278,7 +279,23 @@ namespace InteractiveServer
             }
 
             var word = client.ProducerController.TakeFromBuffer();
-            var message = JsonConvert.SerializeObject(word);
+            string serializedWord;
+
+            using (var stream = new MemoryStream())
+            {
+                var serializer = new DataContractJsonSerializer(typeof(Word));
+                serializer.WriteObject(stream, word);
+
+                stream.Position = 0;
+                using (var reader = new StreamReader(stream))
+                {
+                    serializedWord = reader.ReadToEnd();
+                }
+
+                stream.Close();
+            }
+
+            var message = serializedWord;
             return message;
         }
 
